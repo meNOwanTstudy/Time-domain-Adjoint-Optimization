@@ -309,7 +309,6 @@ plt.savefig(out_path, dpi=150, bbox_inches="tight")
 plt.close()
 print(f"\nNormalized comparison image saved: {out_path}")
 
-# ── npz 저장 ─────────────────────────────────────────────────────────────
 np.savez(
     "TDA_PJH_rev0_gradient_data.npz",
     grad_adj=adj_real, grad_fd=fdm_real,
