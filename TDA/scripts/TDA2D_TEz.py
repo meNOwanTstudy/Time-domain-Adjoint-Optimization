@@ -7,29 +7,40 @@ import scipy.interpolate as spi
 # 1. Situation Set
 # ======================================
 resolution = 20
+nx, ny = 5, 5
+T_f = 1000
+
+res_factor = 4
+sim_res = resolution * res_factor
 cell_size = mp.Vector3(6, 6)
 pml_layers = [mp.PML(1.0)]
 
 air = mp.Medium(index=1.0)
 silicon = mp.Medium(index=3.48)
-nx, ny = 4, 4
-
-T_f = 1000
 
 dx = 1.0 / resolution
 dy = 1.0 / resolution
 
-shift_x = 0.5 * dx if nx % 2 == 0 else 0.0
-shift_y = 0.5 * dy if ny % 2 == 0 else 0.0
+sim_dt = 0.5 / sim_res
+sim_dx = 1.0 / sim_res
+sim_dy = 1.0 / sim_res
+
+sim_shift_x = 0.5 * sim_dx
+sim_shift_y = 0.5 * sim_dy
+
+shift_x = 0.0 if nx % 2 == 0 else 0.5 * dx
+shift_y = 0.0 if ny % 2 == 0 else 0.5 * dy
 
 design_center = mp.Vector3(shift_x, shift_y)
+sim_design_center = mp.Vector3(sim_shift_x, sim_shift_y)
+
 design_region_size = mp.Vector3(nx * dx, ny * dy)
 
 design_variables = mp.MaterialGrid(mp.Vector3(nx, ny), air, silicon)
 
 design_region = mpa.DesignRegion(
     design_variables,
-    volume=mp.Volume(center=design_center, size=design_region_size)
+    volume=mp.Volume(center=sim_design_center, size=design_region_size)
 )
 
 geometry = [
@@ -40,58 +51,78 @@ geometry = [
     )
 ]
 
+sim_geometry = [
+    mp.Block(
+        center=sim_design_center,
+        size=design_region_size,
+        material=design_variables
+    )
+]
+
+
 fcen = 1.0 / 1.55
 fwd_source = [mp.Source(
     mp.GaussianSource(frequency=fcen, fwidth=0.2 * fcen),
-    component=mp.Ez,
-    center=mp.Vector3(-0.8 + shift_x, shift_y),
-    size=mp.Vector3(0, 1.5)
+    component=mp.Hz,
+    center=mp.Vector3(-1.5 + sim_shift_x, sim_shift_y),
+    size=mp.Vector3(0, 0)
 )]
 
-monitor_position = mp.Vector3(0.8 + shift_x, shift_y)
+monitor_position = mp.Vector3(1.5 + sim_shift_x, sim_shift_y)
 
-coords_x = [design_center.x + (i - (nx - 1) / 2) * dx for i in range(nx)]
-coords_y = [design_center.y + (j - (ny - 1) / 2) * dy for j in range(ny)]
+coords_x = [sim_design_center.x + (i - (nx - 1) / 2) * dx for i in range(nx)]
+coords_y = [sim_design_center.y + (j - (ny - 1) / 2) * dy for j in range(ny)]
 
 # Random initial design
 np.random.seed(42)
 x0 = np.random.rand(nx * ny)
 design_variables.update_weights(x0)
 
+
 # 2. Forward Run
 # ======================================
-sim_fwd = mp.Simulation(cell_size=cell_size, boundary_layers=pml_layers, geometry=geometry, sources=fwd_source, resolution=resolution)
+sim_fwd = mp.Simulation(cell_size=cell_size, boundary_layers=pml_layers, geometry=sim_geometry,
+                        sources=fwd_source, resolution=sim_res)
 
-e_fields_fwd_time = []
-e_monitor_time = []
+ex_fields_fwd_time = []
+ey_fields_fwd_time = []
+h_monitor_time = []
 
 def record_fwd_efield(sim):
-    ez_data = np.array([
-        [sim.get_field_point(mp.Ez, mp.Vector3(x, y)) for y in coords_y]
+    ex_data = np.array([
+        [sim.get_field_point(mp.Ex, mp.Vector3(x, y)) for y in coords_y]
         for x in coords_x
     ])
-    e_fields_fwd_time.append(ez_data)
 
-    ez_mon = sim.get_field_point(mp.Ez, monitor_position)
-    e_monitor_time.append(ez_mon)
+    ey_data = np.array([
+        [sim.get_field_point(mp.Ey, mp.Vector3(x, y)) for y in coords_y]
+        for x in coords_x
+    ])
+
+    ex_fields_fwd_time.append(ex_data)
+    ey_fields_fwd_time.append(ey_data)
+
+    hz_mon = sim.get_field_point(mp.Hz, monitor_position)
+    h_monitor_time.append(hz_mon)
 
 sim_fwd.run(record_fwd_efield, until=T_f)
 
-E_fwd_history = np.array(e_fields_fwd_time)
-E_monitor_history = np.array(e_monitor_time)
-e_fields_fwd_time.clear()
-e_monitor_time.clear()
+Ex_fwd_history = np.array(ex_fields_fwd_time)
+Ey_fwd_history = np.array(ey_fields_fwd_time)
+H_monitor_history = np.array(h_monitor_time)
+ex_fields_fwd_time.clear()
+ey_fields_fwd_time.clear()
+h_monitor_time.clear()
 sim_fwd.reset_meep()
 del sim_fwd
 gc.collect()
 
 
-
 # 3. Adjoint Run
 # ======================================
-adj_signal = E_monitor_history[::-1]
+adj_signal = - H_monitor_history[::-1]
 
-t_array = np.linspace(0, T_f, len(E_monitor_history))
+t_array = np.linspace(0, T_f, len(H_monitor_history))
 adj_interp = spi.interp1d(t_array, adj_signal, kind = 'cubic', fill_value=0j, bounds_error=False)
 
 def adj_src_func(t):
@@ -101,25 +132,35 @@ def adj_src_func(t):
         return 0j
 
 # adjoint source
-adj_source = [mp.Source(mp.CustomSource(src_func=adj_src_func), component=mp.Ez, center=monitor_position)]
+adj_source = [mp.Source(mp.CustomSource(src_func=adj_src_func), component=mp.Hz, center=monitor_position)]
 
 sim_adj = mp.Simulation(cell_size=cell_size, boundary_layers=pml_layers,
-                        geometry=geometry, sources=adj_source, resolution=resolution)
+                        geometry=sim_geometry, sources=adj_source, resolution=sim_res)
 
-e_fields_adj_time = []
+ex_fields_adj_time = []
+ey_fields_adj_time = []
 
 def record_adj_efield(sim):
-    ez_data = np.array([
-        [sim.get_field_point(mp.Ez, mp.Vector3(x, y)) for y in coords_y]
+    ex_data = np.array([
+        [sim.get_field_point(mp.Ex, mp.Vector3(x, y)) for y in coords_y]
         for x in coords_x
     ])
-    e_fields_adj_time.append(ez_data)
+
+    ey_data = np.array([
+        [sim.get_field_point(mp.Ey, mp.Vector3(x, y)) for y in coords_y]
+        for x in coords_x
+    ])
+
+    ex_fields_adj_time.append(ex_data)
+    ey_fields_adj_time.append(ey_data)
 
 sim_adj.run(record_adj_efield, until=T_f)
 
 # adjoint field
-E_adj_history = np.array(e_fields_adj_time)
-e_fields_adj_time.clear()
+Ex_adj_history = np.array(ex_fields_adj_time)
+Ey_adj_history = np.array(ey_fields_adj_time)
+ex_fields_adj_time.clear()
+ey_fields_adj_time.clear()
 sim_adj.reset_meep()
 del sim_adj
 del adj_source
@@ -129,31 +170,39 @@ del adj_interp
 gc.collect()
 
 
-
 # 4. Gradient Calculation
 # ======================================
-dt = 0.5 / resolution
 pixel_area = dx * dy
 
 eps_silicon = 3.48 ** 2
 eps_air = 1.0 ** 2
 deps_dp = eps_silicon - eps_air
 
-gradient_exact = np.zeros_like(E_fwd_history[0], dtype=np.complex128)
-for tidx in range(E_fwd_history.shape[0]):
+gradient_exact = np.zeros_like(Ex_fwd_history[0], dtype=np.complex128)
+for tidx in range(Ex_fwd_history.shape[0]):
     if tidx == 0:
-        dE_dt_t = (E_fwd_history[1] - E_fwd_history[0]) / dt
-    elif tidx == E_fwd_history.shape[0] - 1:
-        dE_dt_t = (E_fwd_history[-1] - E_fwd_history[-2]) / dt
+        dEx_dt_t = (Ex_fwd_history[1] - Ex_fwd_history[0]) / sim_dt
+        dEy_dt_t = (Ey_fwd_history[1] - Ey_fwd_history[0]) / sim_dt
+    elif tidx == Ex_fwd_history.shape[0] - 1:
+        dEx_dt_t = (Ex_fwd_history[-1] - Ex_fwd_history[-2]) / sim_dt
+        dEy_dt_t = (Ey_fwd_history[-1] - Ey_fwd_history[-2]) / sim_dt
     else:
-        dE_dt_t = (E_fwd_history[tidx + 1] - E_fwd_history[tidx - 1]) / (2 * dt)
+        dEx_dt_t = (Ex_fwd_history[tidx + 1] - Ex_fwd_history[tidx - 1]) / (2 * sim_dt)
+        dEy_dt_t = (Ey_fwd_history[tidx + 1] - Ey_fwd_history[tidx - 1]) / (2 * sim_dt)
 
-    gradient_exact += E_adj_history[-1 - tidx] * deps_dp * dE_dt_t
+    gradient_exact += (
+        Ex_adj_history[-1 - tidx] * dEx_dt_t
+        + Ey_adj_history[-1 - tidx] * dEy_dt_t
+    ) * deps_dp
 
-gradient_exact *= dt * pixel_area
-del dE_dt_t
-del E_fwd_history
-del E_adj_history
+gradient_exact *= sim_dt * pixel_area
+del dEx_dt_t
+del dEy_dt_t
+del Ex_fwd_history
+del Ey_fwd_history
+del Ex_adj_history
+del Ey_adj_history
+gc.collect()
 
 print("======================================")
 print("Gradient Matrix:")
@@ -164,14 +213,14 @@ print(gradient_exact.real)
 # ======================================
 print("\n--- FDM verification started ---")
 
-J0 = 0.5 * np.sum(np.abs(E_monitor_history)**2) * dt
-del E_monitor_history
+J0 = 0.5 * np.sum(np.abs(H_monitor_history)**2) * sim_dt
+del H_monitor_history
 
 fdm_gradientss = []
 
 for idx_x in range(nx):
     fdm_gradients = []
-    
+
     for idx_y in range(ny):
         delta_eps = 1e-4
 
@@ -181,26 +230,27 @@ for idx_x in range(nx):
 
         design_variables.update_weights(x_pert)
 
-        sim_fdm = mp.Simulation(cell_size=cell_size, boundary_layers=pml_layers, geometry=geometry, sources=fwd_source, resolution=resolution)
+        sim_fdm = mp.Simulation(cell_size=cell_size, boundary_layers=pml_layers, geometry=sim_geometry,
+                                sources=fwd_source, resolution=sim_res)
 
         J1_accum = [0.0]
         def record_fdm_efield(sim):
-            ez_mon = sim.get_field_point(mp.Ez, monitor_position)
-            J1_accum[0] += np.abs(ez_mon) ** 2
+            hz_mon = sim.get_field_point(mp.Hz, monitor_position)
+            J1_accum[0] += np.abs(hz_mon) ** 2
 
         sim_fdm.run(record_fdm_efield, until=T_f)
-        J1 = 0.5 * J1_accum[0] * dt
+        J1 = 0.5 * J1_accum[0] * sim_dt
 
         fdm_gradient = (J1 - J0) / delta_eps
         fdm_gradients.append(fdm_gradient)
-        
+
         sim_fdm.reset_meep()
         del sim_fdm
         del record_fdm_efield
         del J1_accum
         del x_pert
         gc.collect()
-        
+
     fdm_gradientss.append(fdm_gradients)
 
 fdm_matrix = np.array(fdm_gradientss)
@@ -214,6 +264,7 @@ for ix in range(nx):
         print(f"Adjoint Gradient: {gradient_exact[ix, iy].real}")
         print(f"FDM Numerical Gradient         : {fdm_matrix[ix, iy]}")
         print(f"Ratio (FDM / Adjoint)          : {fdm_matrix[ix, iy] / gradient_exact[ix, iy].real}")
+
 
 
 # 6. Normalized Gradient Comparison
@@ -330,15 +381,15 @@ fig.suptitle(
     fontsize=13, fontweight="bold", y=0.99,
 )
 plt.tight_layout(rect=[0, 0, 1, 0.96])
-out_path = "TDA_PJH_rev0_normalized_comparison.png"
+out_path = "TDA4TEz_PJH_ver1_normalized_comparison(4).png"
 plt.savefig(out_path, dpi=150, bbox_inches="tight")
 plt.close()
 print(f"\nNormalized comparison image saved: {out_path}")
 
 np.savez(
-    "TDA_PJH_rev0_gradient_data.npz",
+    "TDA4TEz_PJH_ver1_gradient_data(4).npz",
     grad_adj=adj_real, grad_fd=fdm_real,
     adj_norm=adj_norm, fd_norm=fd_norm,
     fom=J0, rho=x0,
 )
-print("Data saved: TDA_PJH_rev0_gradient_data.npz")
+print("Data saved: TDA4TEz_PJH_ver1_gradient_data(4).npz")
