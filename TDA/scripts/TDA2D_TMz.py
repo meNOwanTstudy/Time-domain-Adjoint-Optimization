@@ -1,4 +1,6 @@
 import gc
+from pathlib import Path
+
 import meep as mp
 import meep.adjoint as mpa
 import numpy as np
@@ -330,15 +332,7 @@ fig.suptitle(
     fontsize=13, fontweight="bold", y=0.99,
 )
 plt.tight_layout(rect=[0, 0, 1, 0.96])
-out_path = "TDA_PJH_rev0_normalized_comparison.png"
+out_path = f"{Path(__file__).stem}_normalized_comparison.png"
 plt.savefig(out_path, dpi=150, bbox_inches="tight")
 plt.close()
 print(f"\nNormalized comparison image saved: {out_path}")
-
-np.savez(
-    "TDA_PJH_rev0_gradient_data.npz",
-    grad_adj=adj_real, grad_fd=fdm_real,
-    adj_norm=adj_norm, fd_norm=fd_norm,
-    fom=J0, rho=x0,
-)
-print("Data saved: TDA_PJH_rev0_gradient_data.npz")

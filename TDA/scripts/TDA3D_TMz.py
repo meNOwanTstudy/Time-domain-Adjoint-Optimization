@@ -7,6 +7,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import time
 import gc
+from pathlib import Path
 
 # 1. Situation Set
 # ======================================
@@ -335,7 +336,7 @@ ax.text(0.05, 0.95, stats_text, transform=ax.transAxes, fontsize=10, verticalali
 fig.suptitle(f"3D Gradient Comparison ({nx_g}x{ny_g}x{nz_g}) | FOM(J0)={J0:.4e}", fontsize=14, fontweight="bold")
 plt.tight_layout(rect=[0, 0, 1, 0.96])
 
-out_path = f"TDA3D_PJH_ver0c_comparison_{nx_g}x{ny_g}x{nz_g}.png"
+out_path = f"{Path(__file__).stem}_comparison_{nx_g}x{ny_g}x{nz_g}.png"
 plt.savefig(out_path, dpi=150)
 
 print(f"\n3D Correlation: {c_all:.4f}, RMSE: {rmse_all:.4f}")

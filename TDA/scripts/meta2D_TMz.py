@@ -7,6 +7,7 @@ import nlopt
 import scipy.interpolate as spi
 import matplotlib.pyplot as plt
 import gc
+from pathlib import Path
 
 # 1. Env Setup
 # ======================================
@@ -218,5 +219,7 @@ x_opt_2d = x_opt.reshape(nx, ny)
 axes[0, 1].set_title("Best Structure (Raw Grayscale)"); axes[0, 1].imshow(x_opt_2d.T, cmap='binary', extent=[-sx/2 + shift_x, sx/2 + shift_x, -design_h/2 + shift_y, design_h/2 + shift_y], origin='lower')
 
 axes[1, 0].set_title("Optimized Intensity (Best Structure)"); axes[1, 0].imshow(np.abs(final_ez).T**2, cmap='inferno', extent=extent, origin='lower')
-axes[1, 1].set_title("Convergence"); axes[1, 1].plot(range(1, len(history_fom) + 1), history_fom, 'o-b'); plt.savefig("meta2D_PJH_ver0m_optimized.png", dpi=200)
-print("Results saved to 'meta2D_PJH_ver0m_optimized.png'.")
+axes[1, 1].set_title("Convergence"); axes[1, 1].plot(range(1, len(history_fom) + 1), history_fom, 'o-b')
+out_path = f"{Path(__file__).stem}_optimized.png"
+plt.savefig(out_path, dpi=200)
+print(f"Results saved to '{out_path}'.")
